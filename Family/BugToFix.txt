@@ -1,0 +1,51 @@
+Bug:
+
+interface FA {
+	String me();
+	interface SSS {}
+	interface Exp {
+		int eval();
+		interface Inner extends SSS { int www(); }
+	}
+}
+
+@Obj
+interface FB extends FA {
+	interface ZZZ { int sss(); }
+	interface Exp extends ZZZ {
+		String str(); 
+ 		interface Inner extends ZZZ { int ttt(); }
+	}
+}
+
+Generated from implementation:
+
+interface FB extends FA {
+    String me();
+    interface SSS extends FA.SSS {}
+    interface ZZZ { int sss(); }
+    interface Exp extends ZZZ, FA.Exp {
+        String str();
+        int eval();
+        interface Inner extends ZZZ, FA.Exp.Inner {
+            int ttt();
+            int www();
+        }
+    }
+}
+
+Generated from algorithm:
+
+interface FB extends FA {
+    String me();
+    interface SSS extends FA.SSS {}
+    interface ZZZ { int sss(); }
+    interface Exp extends ZZZ, FA.Exp {
+        String str();
+        int eval();
+        interface Inner extends ZZZ, FA.Exp.Inner, SSS {
+            int www();
+            int ttt();
+        }      
+    }
+}
