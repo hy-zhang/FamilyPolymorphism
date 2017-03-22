@@ -122,7 +122,7 @@ public class General {
 		} else if (res instanceof SingleTypeReference) {
 			SingleTypeReference res2 = (SingleTypeReference) res;
 			String name = String.valueOf(res2.token);
-			if (map.containsKey(name)) return map.get(name);
+			if (map.containsKey(name)) return copyType(map.get(name));
 			else return res;
 		} else return res;
 	}

@@ -76,7 +76,7 @@ public class HandleFamily extends EclipseAnnotationHandler<Family> {
 		
 //		debug.log("Processing " + String.valueOf(meDecl.name) + "...\n", true);
 		
-		new FamilyPolymorphism(this.me, this.annotationNode);
+		new FamilyPolymorphism(this.me, this.annotationNode, this.ast, p);
 		
 //		debug.log("Finished processing " + String.valueOf(meDecl.name) + ".\n", true);
 	}

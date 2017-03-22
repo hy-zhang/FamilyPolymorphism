@@ -38,10 +38,28 @@ public class FamilyPolymorphism {
 	 * For throwing errors/warnings.
 	 */
 	EclipseNode annotationNode;
+
+	/**
+	 * Annotation ASTNode. Often used for copying types.
+	 */
+	ASTNode ast;
 	
-	public FamilyPolymorphism(EclipseNode node, EclipseNode annotationNode) {
+	/**
+	 * Locating generated code.
+	 */
+	long p;
+	
+	/**
+	 * Constructor.
+	 * @param node
+	 * @param annotationNode
+	 * @param p
+	 */
+	public FamilyPolymorphism(EclipseNode node, EclipseNode annotationNode, Annotation ast, long p) {
 		this.node = node;
 		this.annotationNode = annotationNode;
+		this.ast = ast;
+		this.p = p;
 		
 		boolean autoGenerate = autoGenerate(this.node);
 		if (autoGenerate) println(this.node.get().toString());
@@ -97,10 +115,10 @@ public class FamilyPolymorphism {
 		/*
 		 * Get the super interfaces of child as EclipseNode[].
 		 */
-		if (!(child.get() instanceof TypeDeclaration)) return false;
+		if (!(child.get() instanceof TypeDeclaration)) return true;
 		TypeDeclaration childDecl = (TypeDeclaration) child.get();
-		if (!General.isInterface(childDecl)) return false;
-		if (childDecl.superInterfaces == null || childDecl.superInterfaces.length == 0) return false;
+		if (!General.isInterface(childDecl)) return true;
+		if (childDecl.superInterfaces == null || childDecl.superInterfaces.length == 0) return true;
 		EclipseNode[] superInterfaces = new EclipseNode[childDecl.superInterfaces.length];
 		for (int i = 0; i < superInterfaces.length; i++) {
 			superInterfaces[i] = Path.getTypeDecl(childDecl.superInterfaces[i].toString(), child);
@@ -156,7 +174,7 @@ public class FamilyPolymorphism {
 							superMembersTypeReference.put(superInterfaceName, superInterfaceI);
 						}
 					}
-					Member member = new Member(memberName, typeParametersX, superMembersTypeReference, superMembers);
+					Member member = new Member(memberName, tDecl.typeParameters, typeParametersX, superMembersTypeReference, superMembers, this.ast);
 					if (!members.containsKey(memberName)) {
 						member.sources.add(absolutePathX);
 						members.put(memberName, member);
@@ -210,7 +228,13 @@ public class FamilyPolymorphism {
 					println("Error: member " + member + " is supposed to have " + memberObject.typeParameters.length + " type parameters.");
 					return false;
 				}
-				TypeReference[] generateSuperInterfaces = generateSuperInterfaces(memberObject, General.getTypeParameterNames(sameMemberDecl));
+				Map<String, TypeReference> instantiation = new HashMap<String, TypeReference>();
+				if (sameMemberDecl.typeParameters != null) {
+					String[] typeParamNames = General.getTypeParameterNames(sameMemberDecl);
+					for (int i = 0; i < sameMemberDecl.typeParameters.length; i++)
+						instantiation.put(memberObject.typeParameters[i], new SingleTypeReference(typeParamNames[i].toCharArray(), this.p));
+				}
+				TypeReference[] generateSuperInterfaces = generateSuperInterfaces(memberObject, instantiation);
 				Set<String> qualifiedTypeSuperInterfacesDeclaredByUser = new HashSet<String>();
 				Set<String> singleTypeSuperInterfacesDeclaredByUser = new HashSet<String>();
 				if (sameMemberDecl.superInterfaces != null) {
@@ -230,9 +254,30 @@ public class FamilyPolymorphism {
 				sameMemberDecl.superInterfaces = noDuplicate.size() == 0 ? null : noDuplicate.toArray(new TypeReference[noDuplicate.size()]);
 			} else {
 				TypeDeclaration memberDecl = General.newType(member, childDecl.compilationResult);
-				String[] generatedTypeParameters = new String[memberObject.typeParameters.length];
-				for (int i = 0; i < generatedTypeParameters.length; i++) generatedTypeParameters[i] = "TEMP" + (i + 1);
-				TypeReference[] generateSuperInterfaces = generateSuperInterfaces(memberObject, generatedTypeParameters);
+				TypeParameter[] generatedTypeParameters = null;
+				Map<String, TypeReference> instantiation = new HashMap<String, TypeReference>();
+				if (memberObject.typeParameters.length > 0) {
+					generatedTypeParameters = copyTypeParams(memberObject.copyOfTypeParams, this.ast);
+					for (int i = 0; i < generatedTypeParameters.length; i++) {
+						generatedTypeParameters[i].name = ("TEMP" + (i + 1)).toCharArray();
+						instantiation.put(memberObject.typeParameters[i], new SingleTypeReference(("TEMP" + (i + 1)).toCharArray(), this.p));
+					}
+					for (int i = 0; i < generatedTypeParameters.length; i++) {
+						if (generatedTypeParameters[i].type != null) {
+							TypeReference temp = General.instantiateTypeReference(generatedTypeParameters[i].type, instantiation);
+							generatedTypeParameters[i].type = copyType(temp);
+						}
+						if (generatedTypeParameters[i].bounds != null) {
+							for (int j = 0; j < generatedTypeParameters[i].bounds.length; j++) {
+								TypeReference temp = General.instantiateTypeReference(generatedTypeParameters[i].bounds[j], instantiation);
+								generatedTypeParameters[i].bounds[j] = copyType(temp);
+							}
+						}
+					}
+				}
+				
+				TypeReference[] generateSuperInterfaces = generateSuperInterfaces(memberObject, instantiation);
+				memberDecl.typeParameters = generatedTypeParameters;
 				memberDecl.superInterfaces = generateSuperInterfaces.length == 0 ? null : generateSuperInterfaces;
 				injectType(child, memberDecl);
 			}
@@ -283,11 +328,8 @@ public class FamilyPolymorphism {
 	 * @param typeParameters: bounded type parameters
 	 * @return: TypeReference[]
 	 */
-	private TypeReference[] generateSuperInterfaces(Member m, String[] typeParameters) {
+	private TypeReference[] generateSuperInterfaces(Member m, Map<String, TypeReference> instantiation) {
 		TypeReference[] res = new TypeReference[m.superMembers.size() + m.sources.size()];
-		Map<String, TypeReference> instantiation = new HashMap<String, TypeReference>();
-		for (int i = 0; i < m.typeParameters.length; i++)
-			instantiation.put(m.typeParameters[i], new SingleTypeReference(typeParameters[i].toCharArray(), 0));
 		int size = 0;
 		for (String superMember : m.superMembers) {
 			TypeReference superTypeReference = copyType(m.superMembersTypeReference.get(superMember));
@@ -301,15 +343,15 @@ public class FamilyPolymorphism {
 			char[][] tokens = new char[tokenStrings.length][];
 			for (int k = 0; k < tokens.length; k++) tokens[k] = tokenStrings[k].toCharArray();
 			long[] ps = new long[tokens.length];
-			for (int k = 0; k < ps.length; k++) ps[k] = 0;
-			if (typeParameters.length == 0) {
+			for (int k = 0; k < ps.length; k++) ps[k] = this.p;
+			if (m.typeParameters.length == 0) {
 				res[size + i] = new QualifiedTypeReference(tokens, ps);
 			} else {
 				TypeReference[][] typeArguments = new TypeReference[tokens.length][];
 				for (int k = 0; k < typeArguments.length - 1; k++) typeArguments[k] = null;
-				typeArguments[typeArguments.length - 1] = new TypeReference[typeParameters.length];
-				for (int k = 0; k < typeParameters.length; k++)
-					typeArguments[typeArguments.length - 1][k] = new SingleTypeReference(typeParameters[i].toCharArray(), 0);
+				typeArguments[typeArguments.length - 1] = new TypeReference[m.typeParameters.length];
+				for (int k = 0; k < m.typeParameters.length; k++)
+					typeArguments[typeArguments.length - 1][k] = new SingleTypeReference(("TEMP" + (k + 1)).toCharArray(), this.p);
 				res[size + i] = new ParameterizedQualifiedTypeReference(tokens, typeArguments, 0, ps);
 			}
 		}
@@ -381,6 +423,11 @@ public class FamilyPolymorphism {
 		String name;
 		
 		/**
+		 * Copy of type parameters;
+		 */
+		TypeParameter[] copyOfTypeParams;
+		
+		/**
 		 * Type parameters in the declaration of the member.
 		 */
 		String[] typeParameters;
@@ -408,8 +455,11 @@ public class FamilyPolymorphism {
 		 * @param superMembersTypeReference: TypeReferences bounded by typeParameters
 		 * @param superMembers: names of super members
 		 */
-		Member(String name, String[] typeParameters, Map<String, TypeReference> superMembersTypeReference, Set<String> superMembers) {
+		Member(String name, TypeParameter[] typeParams, String[] typeParameters,
+				Map<String, TypeReference> superMembersTypeReference, Set<String> superMembers, ASTNode ast) {
 			this.name = new String(name);
+			if (typeParams == null) this.copyOfTypeParams = new TypeParameter[0];
+			else this.copyOfTypeParams = copyTypeParams(typeParams, ast);
 			this.typeParameters = new String[typeParameters.length];
 			for (int i = 0; i < this.typeParameters.length; i++)
 				this.typeParameters[i] = typeParameters[i];
@@ -437,6 +487,27 @@ public class FamilyPolymorphism {
 			Map<String, TypeReference> instantiation = new HashMap<String, TypeReference>();
 			for (int i = 0; i < this.typeParameters.length; i++)
 				instantiation.put(m.typeParameters[i], new SingleTypeReference(this.typeParameters[i].toCharArray(), 0));
+			for (int i = 0; i < this.typeParameters.length; i++) {
+				TypeReference t1 = this.copyOfTypeParams[i].type;
+				TypeReference t2 = m.copyOfTypeParams[i].type;
+				if (t1 == null && t2 != null) return false;
+				if (t1 != null && t2 == null) return false;
+				if (t1 != null && t2 != null) {
+					TypeReference t3 = General.instantiateTypeReference(t2, instantiation);
+					if (!t1.toString().equals(t3.toString())) return false;
+				}
+				TypeReference[] t1s = this.copyOfTypeParams[i].bounds;
+				TypeReference[] t2s = m.copyOfTypeParams[i].bounds;
+				if (t1s == null && t2s != null) return false;
+				if (t1s != null && t2s == null) return false;
+				if (t1s != null && t2s != null) {
+					if (t1s.length != t2s.length) return false;
+					for (int k = 0; k < t1s.length; k++) {
+						TypeReference t3 = General.instantiateTypeReference(t2s[k], instantiation);
+						if (!t1s[k].toString().equals(t3.toString())) return false;
+					}
+				}
+			}
 			for (String key : this.superMembersTypeReference.keySet()) {
 				TypeReference t1 = this.superMembersTypeReference.get(key);
 				TypeReference t2 = copyType(m.superMembersTypeReference.get(key));
