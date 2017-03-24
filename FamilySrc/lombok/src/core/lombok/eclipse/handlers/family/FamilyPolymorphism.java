@@ -55,14 +55,16 @@ public class FamilyPolymorphism {
 	 * @param annotationNode
 	 * @param p
 	 */
-	public FamilyPolymorphism(EclipseNode node, EclipseNode annotationNode, Annotation ast, long p) {
+	public FamilyPolymorphism(EclipseNode node, EclipseNode annotationNode, Annotation ast, long p) {		
 		this.node = node;
 		this.annotationNode = annotationNode;
 		this.ast = ast;
 		this.p = p;
 		
 		boolean autoGenerate = autoGenerate(this.node);
-		if (autoGenerate) println(this.node.get().toString());
+		if (autoGenerate) {
+			println(this.node.get().toString().replace("@java.lang.SuppressWarnings(\"all\") ", "").replace("@javax.annotation.Generated(\"lombok\") ", ""));
+		}
 	}
 	
 	/**
