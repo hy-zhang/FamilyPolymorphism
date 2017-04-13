@@ -1,20 +1,13 @@
 package lombok.eclipse.handlers.family;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
-import org.eclipse.jdt.internal.compiler.ast.ASTNode;
-import org.eclipse.jdt.internal.compiler.ast.Annotation;
-import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.TypeDeclaration;
-import org.eclipse.jdt.internal.compiler.ast.TypeReference;
+import static lombok.eclipse.handlers.EclipseHandlerUtil.*;
+
+import org.eclipse.jdt.internal.compiler.ast.*;
 
 import lombok.eclipse.EclipseNode;
-import lombok.eclipse.handlers.family.util.General;
-import lombok.eclipse.handlers.family.util.Path;
-import lombok.eclipse.handlers.family.util.Subtype;
+import lombok.eclipse.handlers.family.util.*;
 
 public class ObjectInterface {
 	
@@ -83,8 +76,21 @@ public class ObjectInterface {
 	
 	private static class Method {
 		
-		MethodDeclaration decl;
+		TypeReference returnType;
+		String methodName;
+		List<TypeReference> paramsType;
+		boolean isDefault;
+		
 		TypeReference origin;
+		
+		Method(TypeReference returnType, String methodName, List<TypeReference> paramsType,
+				boolean isDefault, TypeReference origin) {
+			this.returnType = returnType;
+			this.methodName = methodName;
+			this.paramsType = paramsType;
+			this.isDefault = isDefault;
+			this.origin = origin;
+		}
 		
 		boolean equals(Method m) {
 			return false;
@@ -110,24 +116,56 @@ public class ObjectInterface {
 			this.mBody = true;
 		}
 		
-		private void getAllMethods(EclipseNode thisNode, boolean root) {
-			if (!(thisNode.get() instanceof TypeDeclaration)) return;
+		private List<Method> getAllMethods(EclipseNode thisNode, boolean root, TypeReference[] typeArguments) {
+			if (!(thisNode.get() instanceof TypeDeclaration)) return null;
 			TypeDeclaration thisDecl = (TypeDeclaration) thisNode.get();
-			if (!General.isInterface(thisDecl)) return;
+			if (!General.isInterface(thisDecl)) return null;
+			
+			Map<String, TypeReference> instantiation = new HashMap<String, TypeReference>();
+			String[] paramNames = General.getTypeParameterNames(thisDecl);
+			for (int i = 0; i < paramNames.length; i++) {
+				instantiation.put(paramNames[i], copyType(typeArguments[i]));
+			}
+			
+			List<Method> res = new ArrayList<Method>();
+			
+			TypeReference origin = null; // TODO
 			
 			if (thisDecl.superInterfaces != null) {
 				for (TypeReference superInterface : thisDecl.superInterfaces) {
-					getAllMethods(Path.getTypeDecl(superInterface.toString(), thisNode), false);
-					// trafo: instantiation
-					
+					TypeReference[] newTypeArguments = General.getTypeArguments(superInterface);
+					for (int i = 0; i < newTypeArguments.length; i++)
+						newTypeArguments[i] = General.instantiateTypeReference(newTypeArguments[i], instantiation);
+					EclipseNode superInterfaceDecl = Path.getTypeDecl(superInterface.toString(), thisNode);
+					res.addAll(getAllMethods(superInterfaceDecl, false, newTypeArguments));					
 				}
 			}
 			
 			if (!root) {
-				
+				for (EclipseNode method : thisNode.down()) {
+					if (!(method.get() instanceof MethodDeclaration)) continue;
+					MethodDeclaration methodDecl = (MethodDeclaration) method.get();
+					if (methodDecl.isStatic()) continue;
+					
+					// Not supported for now.
+					if (methodDecl.typeParameters != null) continue;
+					
+					List<TypeReference> paramsType = new ArrayList<TypeReference>();
+					if (methodDecl.arguments != null) {
+						for (Argument arg : methodDecl.arguments) {
+							paramsType.add(copyType(arg.type));
+						}
+					}
+					
+					Method m = new Method(copyType(methodDecl.returnType), String.valueOf(methodDecl.selector), paramsType,
+							methodDecl.isDefaultMethod(), origin);
+					res.add(m);					
+				}
 			} else {
-				
+				// TODO
 			}
+			
+			return null;
 		}
 		
 		private Map<Method, List<Method>> shadow(List<Method> allMethods) {
@@ -164,7 +202,7 @@ public class ObjectInterface {
 		
 		private boolean canOverride(Method m, List<Method> ms) {
 			for (Method existingMethod : ms) {
-				if (!Subtype.subType(m.decl.returnType, compilationUnit, existingMethod.decl.returnType, compilationUnit))
+				if (!Subtype.subType(m.returnType, compilationUnit, existingMethod.returnType, compilationUnit))
 					return false;
 			}
 			return true;
@@ -174,12 +212,12 @@ public class ObjectInterface {
 			if (ms.isEmpty()) return null;
 			Method res = ms.get(0);
 			if (ms.size() == 1) return res;
-			if (res.decl.isDefaultMethod()) return null;
+			if (res.isDefault) return null;
 			for (int i = 1; i < ms.size(); i++) {
 				Method m = ms.get(i);
-				if (m.decl.isDefaultMethod()) return null;
-				if (Subtype.subType(res.decl.returnType, compilationUnit, m.decl.returnType, compilationUnit)) continue;
-				if (Subtype.subType(m.decl.returnType, compilationUnit, res.decl.returnType, compilationUnit)) res = m;
+				if (m.isDefault) return null;
+				if (Subtype.subType(res.returnType, compilationUnit, m.returnType, compilationUnit)) continue;
+				if (Subtype.subType(m.returnType, compilationUnit, res.returnType, compilationUnit)) res = m;
 				else return null;
 			}
 			return res;
