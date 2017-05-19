@@ -1,0 +1,32 @@
+- Introduction
+  - Family polymorphism: the need for class families
+  - Code reuse and type safety
+  - simple encoding in Java: using nested interfaces
+  - Connection to Classless Java work
+  - boilerplate reduced by meta-programming
+  - contributions: simple encoding, annotation processing,
+                   discussion on binary methods and trafos,
+                   case study
+- Overview
+  - A running example: (SQL or Pretty Printer)
+    - Problem of code reuse or type safety from extension
+    - simple encoding of family polymorphism by nested interface
+    - trade-off of subtyping relations among class members
+- Implementation (nearly finished)
+  - Translation rules
+- Discussion
+  - Trafo is a sub-problem of binary methods
+  - Using F-bounds for binary methods
+  - Type safety is guaranteed under certain circumstances
+  - Support for generics & F-bounds
+- Case Studies (Examples)
+  - (the other one: SQL or Pretty Printer)
+- Related Work
+  - Family Polymorphism
+  - Trafo and binary methods in OO languages
+  - Multiple Inheritance, object interfaces
+  - (subtyping vs subclassing? how to improve regarding subtyping among members)
+  - ???
+- Conclusion
+  - Conclude
+  - Limitations
