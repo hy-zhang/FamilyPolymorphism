@@ -1,5 +1,6 @@
 \section{Code Generation}\label{sec:codegeneration}
 
+
 In this section, we present an overview of the code that \lstinline{@Family} generates. The syntax and type system are
 consistent with the Java language. We use translation functions to illustrate our code generation.
 To make it clearer, we split the process of code generation into three parts, in which case we introduce two
@@ -8,6 +9,8 @@ the process of translation. In our implementation, the annotation processing is 
 \lstinline{@Family}, \lstinline{@Obj} and \lstinline{@ObjOf} respectively. The translation rules are presented in Figure \ref{fig:trans1}
 and Figure \ref{fig:trans2}, together with some auxiliary functions. Note that in practice, our \textsf{@Family} supports simple
 generics without bounds, but for simplicity reason it is not included in the formalization.
+
+
 
 \begin{figure}
 \begin{tabular}{|l|}
