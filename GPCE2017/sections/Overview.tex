@@ -1,1 +1,204 @@
 \section{Overview}\label{sec:overview}
+
+A lot of boilerplate generated
+multi-sorts, generics
+
+independent extensibility
+High-level hierarchies
+
+In this section, we illustrate how to model simple family polymorphism in Java with interfaces,
+and how \name avoids boilerplate code for more usability.
+
+\subsection{Modelling Families with Nested Interfaces}
+
+The original family polymorphism paper [] motivates the need for class families. Software programming
+often requires ``the variability at a more global scale than the individual class''. For example, a data
+structure is usually represented by an abstract syntax tree, and such an AST may contain several classes.
+It is necessary to maintain the consistency of those classes upon updates or extensions. \red{TODO: Move this paragraph
+to Introduction.}
+
+An approach to family polymorphism should ensure both type safety and code reuse. It is actually quite tricky to model
+family polymorphism in existing languages like Java, without additional syntax and semantics support. Yet a sub-problem of
+family polymorphism is encapsulation, namely how to group family members into modules. This motivates us to use nested components.
+By Java's semantics, inner classes are dependent from their enclosing type. In contrast, nested interfaces are only static, that is
+to say, they are only grouped by a module, hence it is no different to put them outside the containing interface. Obviously
+the advantage is that we can keep the names of family members when they are extended. 
+
+Now one may observe that the use of interfaces has a trade-off: multiple interface inheritance supported by Java makes it convenient for extensibility, nevertheless,
+interfaces are weaker than classes on state and instantiation. In Java, interfaces do not own fields or constructors.
+Fortunately, we can adopt object interfaces from the Classless Java model []. In that case, fields are modelled by abstract methods,
+and static methods can be defined with anonymous classes that deals with object creation.
+
+Below is an example, where
+three family members \lstinline|Exp,Lit,Add| compose the AST of a simple expression language:
+
+\begin{lstlisting}
+interface Base {
+  interface Exp {
+    int eval();
+  }
+  interface Lit extends Exp {
+    int _i();
+    default int eval() {
+      return _i();
+    }
+  }
+  interface Add extends Exp {
+    Exp _e1(); Exp _e2();
+    default int eval() {
+      return _e1().eval() + _e2().eval();
+    }
+  }
+}
+\end{lstlisting}
+Here  \lstinline|Lit| and \lstinline|Add|
+stand for literals and additions, respectively. Each literal holds an integer, while each addition is constructed by
+two sub-expressions. These fields are modelled by ``field methods'', which are abstract methods without parameters. Those
+method names start with underscores by convention. An operation \lstinline|eval()| is defined for evaluating expressions,
+and implemented in different cases.
+
+Note that \lstinline|Base| is the family name, but since the nested interfaces are only static, one
+can easily access them globally by \lstinline|Base.Exp|, and so on. For simplicity, we are omitting constructor methods
+in the above code.
+
+\subsection{Solving the Expression Problem}
+
+Interestingly but also importantly, it introduces a new solution to the Expression Problem. Adding new variants and new operations
+becomes easy, and inheritance contributes a lot to code reuse. Following the above example, we try to add a new operation for pretty-printing,
+by creating a new class family:
+
+\begin{lstlisting}
+interface BaseWithPrint extends Base {
+  interface Exp extends Base.Exp {
+    String print();
+  }
+  interface Lit extends Exp with Base.Lit {
+    // int _i(); not needed
+    default String print() {
+      return "" + _i();
+    }
+  }
+  interface Add extends Exp with Base.Add {
+    Exp _e1(); Exp _e2(); // Type-refinement from Base.Exp to BaseWithEval.Exp
+    default String print() {
+      return _e1().print() + " + " + _e2().print();
+    }
+  }
+}
+\end{lstlisting}
+Here each family member also inherits its corresponding member in \lstinline|Base|, so that \lstinline|BaseWithPrint.Exp|
+supports both evaluation and pretty-printing. The type-refinement of fields in \lstinline|Add| ensures that the sub-expressions
+support both operations, and this is done because Java allows covariant return types.
+It is not necessary to make \lstinline|BaseWithPrint| as a subtype of
+\lstinline|Base|, we just write this to indicate the relation between class families.
+
+Unlike the traditional family polymorphism, when we use inheritance to achieve code reuse, it also builds subtyping relations
+among members from different families, because subclassing accompanies subtyping in Java. Separating them (if we want) requires
+additional semantics, it is not cheap. Also in this case, we can no longer avoid mixing the members from different families.
+In fact, isolating families or avoiding mixing the members is sometimes too conservative; it has been shown that mixing them can
+be both type-safe and practical []. On the other hand, one can also check the dynamic types of objects to ensure they belong to
+the same family, and this can simply be done by some Java reflection code.
+
+By the Expression Problem, the other dimension of extensibility is adding new data constructs. Suppose we want subtraction to be added
+to the \lstinline|Base| family. The following code realizes such an extension:
+
+\begin{lstlisting}
+interface BaseWithSub extends Base {
+  interface Exp extends Base.Exp {}
+  interface Lit extends Exp with Base.Lit {}
+  interface Add extends Exp with Base.Add {
+    Exp _e1(); Exp _e2();
+  }
+  interface Sub extends Exp {
+    Exp _e1(); Exp _e2();
+    default int eval() {
+      return _e1().eval() - _e2().eval();
+    }
+  }
+}
+\end{lstlisting}
+Here \lstinline|Exp|, \lstinline|Lit| and \lstinline|Add| only deal with type-refinements and inheritance. A
+new nested interface \lstinline|Sub| includes two field methods for the two sub-expressions, together with
+the implementation for the inherited \lstinline|eval()|.
+
+We have demonstrated that such a pattern provides a practical solution to the Expression Problem. The member
+names need not to be changed, and multiple inheritance offers great code reuse. However, one issue occurring
+in most object-oriented languages is that when recursive types appear in the parameters or return types,
+such methods violate extensibility. They are the well-known \textit{binary methods} []. Some solutions to binary methods
+like \textit{ThisType} or \textit{MyType} [] again require language support. A workaround to this in Java
+is the \textit{F-bounded polymorphism} [], which we will discuss later in Section ?.
+
+\subsection{Reducing Boilerplate with \name}
+Although the class families support two dimensions of extensibility, it is unsatisfactory to observe that there is a lot
+of boilerplate code caused by extensions, and it can be divided into two parts: the glue code and type-refinement code.
+The glue code builds subtyping relations among families and their members, so that fields and operations are inherited.
+The type-refinement code updates the field types to those in the same family, and this is done by just redeclaring field
+methods (but member types are already new).
+
+We have developed the Java annotation \lstinline|@Family| to reduce that boilerplate. The annotation processing can automatically
+generate the required syntax in bytecode during compilation, and does not affect source code. In our framework, \lstinline|BaseWithPrint|
+and \lstinline|BaseWithSub| can be defined as follows:
+\begin{lstlisting}
+@Family interface BaseWithPrint extends Base {
+  interface Exp {
+    String print();
+  }
+  interface Lit {
+    default String print() {
+      return "" + _i();
+    }
+  }
+  interface Add {
+    default String print() {
+      return _e1().print() + " + " + _e2().print();
+    }
+  }
+}
+
+@Family interface BaseWithSub extends Base {
+  interface Sub extends Exp {
+    Exp _e1(); Exp _e2();
+    default int eval() {
+      return _e1().eval() - _e2().eval();
+    }
+  }
+}
+\end{lstlisting}
+Here \lstinline|@Family| automatically fills in the super types of family members, and meanwhile
+refines field types. Users only need to write the interesting code of extensions. The above code
+also explains why we need subtyping among families, because it indicates what the annotation should do.
+
+The family subtyping also achieves independent extensibility []. Suppose we have a list of families,
+each introducing several new operations on expressions. By multiple inheritance, we can easily compose
+those features without boilerplate, like the code below:
+\begin{lstlisting}
+interface Eval {...} // the family with evaluation
+interface Print {...} // the family with pretty-priting
+interface Depth {...} // the family with the operation of calculating tree depth
+...
+
+@Family interface ComposedFamily extends Eval, Print, Depth, ... {} // combining features
+\end{lstlisting}
+
+In the above example, combining features does not need any extra code in the body. Similary we can also
+combine \lstinline|BaseWithPrint| and \lstinline|BaseWithSub|, nonetheless, we need to implement the
+pretty-printing on subtractions, so that the object interfaces are able to be instantiated:
+\begin{lstlisting}
+@Family interface BaseWithPrintAndSub extends BaseWithPrint, BaseWithSub {
+  interface Sub {
+    default String print() {
+      return _e1().print() + " - " + _e2().print();
+    }
+  }
+}
+\end{lstlisting}
+
+In our prototype implementation, \lstinline|@Family| also supports generics and higher-order hierarchies [].
+Simple generics support makes it practical to use, and higher-order hierarchies allow us to define nested families,
+where annotation processing can deeply work on all the inside interfaces. Since families and members are both defined
+as interfaces, and they rely on subtyping, it is just not necessary to distinguish them.
+
+
+
+
+

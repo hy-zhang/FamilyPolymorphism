@@ -81,7 +81,7 @@ public class ObjectInterface {
 		List<TypeReference> paramsType;
 		boolean isDefault;
 		
-		TypeReference origin;
+		TypeReference origin; // if original interface is generic, the type arguments are null strings.
 		
 		Method(TypeReference returnType, String methodName, List<TypeReference> paramsType,
 				boolean isDefault, TypeReference origin) {
@@ -93,7 +93,53 @@ public class ObjectInterface {
 		}
 		
 		boolean equals(Method m) {
-			return false;
+			if (!this.methodName.equals(m.methodName)) return false;
+			if (this.paramsType.size() != m.paramsType.size()) return false;
+			for (int i = 0; i < this.paramsType.size(); i++) {
+				TypeReference t1 = this.paramsType.get(i);
+				TypeReference t2 = m.paramsType.get(i);
+				if (!t1.toString().equals(t2.toString())) return false; // all types need to be fully qualified.
+			}
+			return true;
+		}
+		
+		static TypeReference generateOrigin(EclipseNode node, int typeParams, long p) {
+			String[] path = Path.getAbsolutePathForType(node).split("\\.");
+			if (path.length > 1) {
+				char[][] tokens = new char[path.length][];
+				long[] ps = new long[path.length];
+				for (int i = 0; i < path.length; i++) {
+					tokens[i] = path[i].toCharArray();
+					ps[i] = p;
+				}
+				if (typeParams > 0) {
+					TypeReference[][] typeArguments = new TypeReference[path.length][];
+					for (int k = 0; k < typeArguments.length - 1; k++) typeArguments[k] = null;
+					typeArguments[typeArguments.length - 1] = new TypeReference[typeParams];
+					for (int k = 0; k < typeParams; k++)
+						typeArguments[typeArguments.length - 1][k] = new SingleTypeReference(new char[0], p);
+					return new ParameterizedQualifiedTypeReference(tokens, typeArguments, 0, ps);
+				} else return new QualifiedTypeReference(tokens, ps);
+			} else {
+				char[] name = path[0].toCharArray();
+				if (typeParams > 0) {
+					TypeReference[] typeArguments = new TypeReference[typeParams];
+					for (int k = 0; k < typeParams; k++)
+						typeArguments[k] = new SingleTypeReference(new char[0], p);
+					return new ParameterizedSingleTypeReference(name, null, 0, p);
+				} else return new SingleTypeReference(name, p);
+			}
+		}
+		
+		static Method buildFromMethodDecl(MethodDeclaration methodDecl, Map<String, TypeReference> instantiation, TypeReference origin) {
+			List<TypeReference> paramsType = new ArrayList<TypeReference>();
+			if (methodDecl.arguments != null) {
+				for (Argument arg : methodDecl.arguments) {
+					paramsType.add(General.instantiateTypeReference(arg.type, instantiation));
+				}
+			}
+			return new Method(General.instantiateTypeReference(copyType(methodDecl.returnType), instantiation),
+					String.valueOf(methodDecl.selector), paramsType, methodDecl.isDefaultMethod(), origin);
 		}
 		
 	}
@@ -103,17 +149,22 @@ public class ObjectInterface {
 		EclipseNode node;
 		TypeDeclaration nodeDecl;
 		EclipseNode compilationUnit;
-		boolean mBody = false;
+		long p;
+		List<Method> allMethods;
 		
-		MBody(EclipseNode node, EclipseNode compilationUnit) {
+		MBody(EclipseNode node, EclipseNode compilationUnit, long p) {
 			if (!(node.get() instanceof TypeDeclaration)) return;
 			this.node = node;
 			this.nodeDecl = (TypeDeclaration) node.get();
 			if (!General.isInterface(this.nodeDecl)) return;
 			this.compilationUnit = compilationUnit;
+			this.p = p;
 			
-			
-			this.mBody = true;
+			String[] paramNames = General.getTypeParameterNames(this.nodeDecl);
+			TypeReference[] typeParams = new TypeReference[paramNames.length];
+			for (int i = 0; i < typeParams.length; i++)
+				typeParams[i] = new SingleTypeReference(paramNames[i].toCharArray(), p);
+			this.allMethods = getAllMethods(node, true, typeParams);
 		}
 		
 		private List<Method> getAllMethods(EclipseNode thisNode, boolean root, TypeReference[] typeArguments) {
@@ -129,8 +180,6 @@ public class ObjectInterface {
 			
 			List<Method> res = new ArrayList<Method>();
 			
-			TypeReference origin = null; // TODO
-			
 			if (thisDecl.superInterfaces != null) {
 				for (TypeReference superInterface : thisDecl.superInterfaces) {
 					TypeReference[] newTypeArguments = General.getTypeArguments(superInterface);
@@ -141,33 +190,52 @@ public class ObjectInterface {
 				}
 			}
 			
-			if (!root) {
+			if (!root) { // TODO: UpdateRef
 				for (EclipseNode method : thisNode.down()) {
 					if (!(method.get() instanceof MethodDeclaration)) continue;
 					MethodDeclaration methodDecl = (MethodDeclaration) method.get();
 					if (methodDecl.isStatic()) continue;
-					
-					// Not supported for now.
-					if (methodDecl.typeParameters != null) continue;
-					
-					List<TypeReference> paramsType = new ArrayList<TypeReference>();
-					if (methodDecl.arguments != null) {
-						for (Argument arg : methodDecl.arguments) {
-							paramsType.add(copyType(arg.type));
-						}
-					}
-					
-					Method m = new Method(copyType(methodDecl.returnType), String.valueOf(methodDecl.selector), paramsType,
-							methodDecl.isDefaultMethod(), origin);
+					if (methodDecl.typeParameters != null) continue; // Generic methods not supported for now.
+					TypeReference origin = Method.generateOrigin(thisNode, paramNames.length, this.p);
+					Method m = Method.buildFromMethodDecl(methodDecl, instantiation, origin);
 					res.add(m);					
 				}
+				return res;
 			} else {
-				// TODO
+				List<Method> finalRes = new ArrayList<Method>();
+				Map<Method, List<Method>> inheritedMethods = shadow(res);
+				Set<Method> notOverriddenMethods = inheritedMethods.keySet();
+				for (EclipseNode method : thisNode.down()) {
+					if (!(method.get() instanceof MethodDeclaration)) continue;
+					MethodDeclaration methodDecl = (MethodDeclaration) method.get();
+					if (methodDecl.isStatic()) continue;
+					if (methodDecl.typeParameters != null) continue; // Generic methods not supported for now.
+					TypeReference origin = Method.generateOrigin(thisNode, paramNames.length, this.p);
+					Method m = Method.buildFromMethodDecl(methodDecl, instantiation, origin);
+					boolean override = false;
+					for (Method inheritedMethod : inheritedMethods.keySet()) {
+						if (inheritedMethod.equals(m)) {
+							override = true;
+							if (canOverride(m, inheritedMethods.get(inheritedMethod))) {
+								finalRes.add(m);
+								notOverriddenMethods.remove(inheritedMethod);
+							} else return null; // TODO: throw exception, cannot override
+						}
+					}
+					if (!override) finalRes.add(m);
+				}
+				for (Method notOverriddenMethod : notOverriddenMethods) {
+					List<Method> list = inheritedMethods.get(notOverriddenMethod);
+					if (list.size() < 1) continue;
+					Method mostSpecific = mostSpecific(list);
+					if (mostSpecific == null) return null; // TODO: throw exception, has conflict
+					finalRes.add(mostSpecific);
+				}
+				return finalRes;
 			}
-			
-			return null;
 		}
 		
+		// Done.
 		private Map<Method, List<Method>> shadow(List<Method> allMethods) {
 			Map<Method, List<Method>> res = new HashMap<Method, List<Method>>();
 			for (Method toAdd : allMethods) {
@@ -200,6 +268,7 @@ public class ObjectInterface {
 			return res;
 		}
 		
+		// Done.
 		private boolean canOverride(Method m, List<Method> ms) {
 			for (Method existingMethod : ms) {
 				if (!Subtype.subType(m.returnType, compilationUnit, existingMethod.returnType, compilationUnit))
@@ -208,6 +277,7 @@ public class ObjectInterface {
 			return true;
 		}
 		
+		// Done.
 		private Method mostSpecific(List<Method> ms) {
 			if (ms.isEmpty()) return null;
 			Method res = ms.get(0);
